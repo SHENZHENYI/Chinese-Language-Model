@@ -1,12 +1,14 @@
+import random
 import torch
 from tqdm import tqdm
 from torch import nn, optim
+import torch.nn.functional as F
 
 from data.dataset import CorpusData
 from data.dataloader import get_dataloader
 from model.rnn import RNNModel
 
-def train(n_epochs, model, dataloader, loss_fn, optimizer, device, vocab, model_path, pred_seq_len=200):
+def train(n_epochs, model, dataloader, loss_fn, optimizer, device, vocab, model_path, clip, pred_seq_len=200):
     '''Train
 
     This function trains the model by wrapping 'train_one_epoch'
@@ -22,11 +24,11 @@ def train(n_epochs, model, dataloader, loss_fn, optimizer, device, vocab, model_
         no returns. the model will be updated.
     '''
     for epoch in range(n_epochs):
-        loss = train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path)
-        print(f'epoch: {epoch}, loss: {loss}')
-        #predict(model, device, vocab, seq_len=pred_seq_len, start_char='明')
+        #loss = train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path, clip)
+        #print(f'epoch: {epoch}, loss: {loss}')
+        predict(model, device, vocab, seq_len=pred_seq_len, start_char='又')
 
-def train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path):
+def train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path, clip):
     '''Training process in one epoch
 
     Args:
@@ -51,7 +53,7 @@ def train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path):
             for i in range(pred.shape[1]):
                 loss += loss_fn(pred[:,i], y[:,i])
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), CLIP)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
             optimizer.step()
             prog.update(1)
             loss_meter.append(loss.item())
@@ -72,19 +74,21 @@ def predict(model, device, vocab, seq_len=200, start_char='明'):
         the result predicted string
     '''
     model.eval()
-    input = vocab.idx2char[start_char]
+    input = vocab.char2idx[start_char]
     #input = F.one_hot(encode_str_data(input_seq), num_classes=95).to(torch.float32)
     out_str = []
+    hidden = None
     for i in range(seq_len):
-        output, hidden = model(input.view(1,-1).to(device), hidden)
+        input = torch.tensor(input).long()
+        output, hidden = model(input.view(1,-1).to(device), [1], hidden)
         probs = F.softmax(output.view(-1)).cpu().tolist() # to prob
-        sample = random.choices(vocab, weights=probs)[0] # sample with the prob
-        input = encode_str_data(sample, vocab)
+        sample = random.choices(list(vocab.char2idx.keys()), weights=probs)[0] # sample with the prob
+        input = vocab.char2idx[sample]
         out_str.append(sample)
     print('*'*60)
-    print(f'The predicted string with a starting seed of {seed}')
+    print(f'The predicted string with a starting seed of {start_char}')
     print('*'*60)
-    print(seed+''.join(out_str))
+    print(start_char+''.join(out_str))
     print('*'*60)
 
 
@@ -98,24 +102,24 @@ def main():
     # configs
     LEARNING_RATE = 0.002
     BATCH_SIZE = 8
-    NUM_WORKERS = 2
+    NUM_WORKERS = 8
     CLIP = 1.
-    EMB_DIM = 256
-    HID_DIM = 128
-    NUM_LAYERS = 2
+    EMB_DIM = 64
+    HID_DIM = 32
+    NUM_LAYERS = 1
     N_EPOCHS = 10
     #########
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     corpus_path = './corpus/songci.txt'
     model_path = './ckpts/rnn.pt'
     train_set = CorpusData(corpus_path)
     vocab = train_set.get_vocab()
-    model = RNNModel(input_dim=len(vocab), emb_dim=EMB_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS)
+    model = RNNModel(input_dim=len(vocab), emb_dim=EMB_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS).to(device)
     loss_fn = nn.CrossEntropyLoss(ignore_index=vocab.char2idx['<PAD>'])
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     train_loader = get_dataloader(train_set, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=False)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    train(N_EPOCHS, model, train_loader, loss_fn, optimizer, device, vocab, model_path, pred_seq_len=200):
+    train(N_EPOCHS, model, train_loader, loss_fn, optimizer, device, vocab, model_path, CLIP, pred_seq_len=200)
 
 
 if __name__ == '__main__':
