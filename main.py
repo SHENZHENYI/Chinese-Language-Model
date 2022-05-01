@@ -1,6 +1,6 @@
 import random
-import torch
 from tqdm import tqdm
+import torch
 from torch import nn, optim
 import torch.nn.functional as F
 
@@ -24,8 +24,8 @@ def train(n_epochs, model, dataloader, loss_fn, optimizer, device, vocab, model_
         no returns. the model will be updated.
     '''
     for epoch in range(n_epochs):
-        #loss = train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path, clip)
-        #print(f'epoch: {epoch}, loss: {loss}')
+        loss = train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path, clip)
+        print(f'epoch: {epoch}, loss: {loss}')
         predict(model, device, vocab, seq_len=pred_seq_len, start_char='又')
 
 def train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path, clip):
@@ -51,7 +51,7 @@ def train_one_epoch(model, dataloader, loss_fn, optimizer, device, model_path, c
             pred, _ = model(x.to(device), x_len)
             loss = 0
             for i in range(pred.shape[1]):
-                loss += loss_fn(pred[:,i], y[:,i])
+                loss += loss_fn(pred[:,i], y[:,i].to(device))/pred.shape[1]
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
             optimizer.step()
@@ -85,6 +85,8 @@ def predict(model, device, vocab, seq_len=200, start_char='明'):
         sample = random.choices(list(vocab.char2idx.keys()), weights=probs)[0] # sample with the prob
         input = vocab.char2idx[sample]
         out_str.append(sample)
+        if sample == '。': # training data stops at a full stop
+            break
     print('*'*60)
     print(f'The predicted string with a starting seed of {start_char}')
     print('*'*60)
@@ -101,12 +103,12 @@ def load_model(model, save_path, device):
 def main():
     # configs
     LEARNING_RATE = 0.002
-    BATCH_SIZE = 8
+    BATCH_SIZE = 32
     NUM_WORKERS = 8
     CLIP = 1.
-    EMB_DIM = 64
-    HID_DIM = 32
-    NUM_LAYERS = 1
+    EMB_DIM = 256
+    HID_DIM = 128
+    NUM_LAYERS = 2
     N_EPOCHS = 10
     #########
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -117,7 +119,7 @@ def main():
     model = RNNModel(input_dim=len(vocab), emb_dim=EMB_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS).to(device)
     loss_fn = nn.CrossEntropyLoss(ignore_index=vocab.char2idx['<PAD>'])
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    train_loader = get_dataloader(train_set, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=False)
+    train_loader = get_dataloader(train_set, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, shuffle=True)
     
     train(N_EPOCHS, model, train_loader, loss_fn, optimizer, device, vocab, model_path, CLIP, pred_seq_len=200)
 
